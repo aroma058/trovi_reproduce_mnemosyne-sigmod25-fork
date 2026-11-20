@@ -1,14 +1,22 @@
 #!/bin/bash
-# Reproduces Figure 4 of Mnemosyne (SIGMOD '25):
-# Output: exp-figures/Fig4.png
+# Reproduces Figure 12 of Mnemosyne (SIGMOD '25) at a smaller scale:
+# read bytes (a-f) and read latency (g-l) for RocksDB vs Mnemosyne vs Mnemosyne+.
+#
+# Changes from the paper's setup, so it finishes in about 6-8 hours:
+#   - 1/4 of the data: 5.25M inserts, 7.75M queries, 2.5M updates (paper: 21M / 31M / 10M)
+#   - 1/4 of the block cache (128 MB instead of 512 MB), so the cache-to-data ratio stays the same
+#   - 3 bits-per-key values (2, 4, 6) instead of 6 (2-7)
+#   - 1 run per setting (same as the authors' default RUNS=1)
+# Output: exp-figures/Fig12.png (ours) and exp-figures/Fig12_original.png (authors')
 set -e
+echo "Started at: $(date)"
 
 # ---------- 1. Install dependencies ----------
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     build-essential pkg-config \
     libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev \
-    python3-matplotlib python3-pandas python3-numpy \
+    python3-matplotlib python3-pandas python3-numpy python3-pil poppler-utils \
     texlive-latex-extra texlive-fonts-recommended cm-super dvipng
 
 # ---------- 2. Download the code that lives in other repos (submodules) ----------
@@ -16,10 +24,39 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
 git config --global url."https://github.com/".insteadOf git@github.com:
 git submodule init
 git submodule update K-V-Workload-Generator skew-aware-rocksdb-8.9.1 skew-aware-bpk-benchmark
+
+# Start from clean copies, so running this script twice gives the same result
+git checkout -- workload_generator_scripts exp-figures plot_scripts
+git -C skew-aware-bpk-benchmark checkout -- .
+
 # Newer Ubuntu no longer has sys/vtimes.h. The benchmark includes it but never uses it, so remove that line.
 sed -i '/sys\/vtimes.h/d' skew-aware-bpk-benchmark/emu_util.cc
 
-# ---------- 3. Compile ----------
+# ---------- 3. Make the experiment smaller ----------
+# 1/4 of the data and operations
+sed -i 's/^I="21000000"/I="5250000"/; s/^Q="31000000"/Q="7750000"/; s/^U="10000000"/U="2500000"/' \
+    workload_generator_scripts/workload_type_II.sh
+# 3 bits-per-key values and 1/4 of the block cache
+sed -i 's/^bpk_list=.*/bpk_list=("2" "4" "6")/; s/^BCC=.*/BCC="131072"/' \
+    skew-aware-bpk-benchmark/exp_query_lat.sh
+# Tell the result-merging script about the 3 bits-per-key values
+sed -i 's/^bpk_list = .*/bpk_list = ["2.0","4.0","6.0"]/' \
+    skew-aware-bpk-benchmark/merge_by_short_bpk_with_rw_latency.py
+
+# The authors' plot fixes the y-axis range for their machine and data size.
+# Let the y-axis fit our numbers instead (smaller data, different SSD).
+sed -i '0,/^    if args.showLegend:/s//    ax.yaxis.set_major_locator(mpl.ticker.AutoLocator()); ax.set_autoscaley_on(True); ax.relim(); ax.autoscale_view(scalex=False); ax.set_ylim(bottom=0)\n    if args.showLegend:/' \
+    plot_scripts/mnemosyneplus-main-exp-plot.py
+
+echo "Settings used:"
+grep -E '^(I|Q|U)=' workload_generator_scripts/workload_type_II.sh
+grep -E '^(bpk_list|BCC)=' skew-aware-bpk-benchmark/exp_query_lat.sh
+
+# Keep a copy of the authors' Figure 12 panels before they get overwritten
+mkdir -p exp-figures/original
+cp exp-figures/Fig12-*.pdf exp-figures/original/
+
+# ---------- 4. Compile ----------
 cd K-V-Workload-Generator
 make load_gen
 cd ..
@@ -29,23 +66,21 @@ make static_lib -j$(nproc)
 cd ..
 
 cd skew-aware-bpk-benchmark
-make bpk_benchmark
+make query_lat_exp
 cd ..
 
-# ---------- 4. Set up a RAM disk for the database ----------
-sudo mkdir -p /mnt/ramdisk
-if ! mountpoint -q /mnt/ramdisk; then
-    sudo mount -t tmpfs -o size=80G tmpfs /mnt/ramdisk
-fi
-sudo chown -R $(whoami) /mnt/ramdisk
-mkdir -p /mnt/ramdisk/db_working_home
-export RAM_DB_HOME=/mnt/ramdisk/db_working_home
-
-# ---------- 5. Run the Figure 4 experiment ----------
+# ---------- 5. Run the Figure 12 experiment ----------
+# The database goes on the machine's local disk
+export FAST_DB_HOME=$HOME/db_working_home
+mkdir -p $FAST_DB_HOME
 ulimit -n 65536
-rm -f exp-figures/Fig4.png   # remove the authors' copy so we only see our own result
 cd exp-scripts
-./fig4.sh
+./fig12.sh
 cd ..
 
-echo "Done. Figure saved at exp-figures/Fig4.png"
+# ---------- 6. Put the 12 panels into one picture ----------
+python3 make_fig12_grid.py exp-figures exp-figures/Fig12.png
+python3 make_fig12_grid.py exp-figures/original exp-figures/Fig12_original.png
+
+echo "Finished at: $(date)"
+echo "Done. Figure saved at exp-figures/Fig12.png"
