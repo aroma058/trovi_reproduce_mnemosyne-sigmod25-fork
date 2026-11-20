@@ -16,6 +16,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
 git config --global url."https://github.com/".insteadOf git@github.com:
 git submodule init
 git submodule update K-V-Workload-Generator skew-aware-rocksdb-8.9.1 skew-aware-bpk-benchmark
+# Newer Ubuntu no longer has sys/vtimes.h. The benchmark includes it but never uses it, so remove that line.
+sed -i '/sys\/vtimes.h/d' skew-aware-bpk-benchmark/emu_util.cc
 
 # ---------- 3. Compile ----------
 cd K-V-Workload-Generator
