@@ -2,9 +2,10 @@
 # Reproduces Figure 12 of Mnemosyne (SIGMOD '25) at a smaller scale:
 # read bytes (a-f) and read latency (g-l) for RocksDB vs Mnemosyne vs Mnemosyne+.
 #
-# Changes from the paper's setup, so it finishes in about 6-8 hours:
-#   - 1/4 of the data: 5.25M inserts, 7.75M queries, 2.5M updates (paper: 21M / 31M / 10M)
-#   - 1/4 of the block cache (128 MB instead of 512 MB), so the cache-to-data ratio stays the same
+# Changes from the paper's setup, so it finishes in about 7-9 hours on a Chameleon node:
+#   - 1/8 of the data: 2.625M inserts (paper: 21M)
+#   - 1/16 of the operations: 1.9375M queries, 0.625M updates (paper: 31M / 10M), same query:update ratio
+#   - 1/8 of the block cache (64 MB instead of 512 MB), so the cache-to-data ratio stays the same
 #   - 3 bits-per-key values (2, 4, 6) instead of 6 (2-7)
 #   - 1 run per setting (same as the authors' default RUNS=1)
 # Output: exp-figures/Fig12.png (ours) and exp-figures/Fig12_original.png (authors')
@@ -28,16 +29,18 @@ git submodule update K-V-Workload-Generator skew-aware-rocksdb-8.9.1 skew-aware-
 # Start from clean copies, so running this script twice gives the same result
 git checkout -- workload_generator_scripts exp-figures plot_scripts
 git -C skew-aware-bpk-benchmark checkout -- .
+# Remove results from any earlier run
+rm -rf skew-aware-bpk-benchmark/output-bpk* skew-aware-bpk-benchmark/agg_output
 
 # Newer Ubuntu no longer has sys/vtimes.h. The benchmark includes it but never uses it, so remove that line.
 sed -i '/sys\/vtimes.h/d' skew-aware-bpk-benchmark/emu_util.cc
 
 # ---------- 3. Make the experiment smaller ----------
-# 1/4 of the data and operations
-sed -i 's/^I="21000000"/I="5250000"/; s/^Q="31000000"/Q="7750000"/; s/^U="10000000"/U="2500000"/' \
+# 1/8 of the data, 1/16 of the operations
+sed -i 's/^I="21000000"/I="2625000"/; s/^Q="31000000"/Q="1937500"/; s/^U="10000000"/U="625000"/' \
     workload_generator_scripts/workload_type_II.sh
-# 3 bits-per-key values and 1/4 of the block cache
-sed -i 's/^bpk_list=.*/bpk_list=("2" "4" "6")/; s/^BCC=.*/BCC="131072"/' \
+# 3 bits-per-key values and 1/8 of the block cache
+sed -i 's/^bpk_list=.*/bpk_list=("2" "4" "6")/; s/^BCC=.*/BCC="65536"/' \
     skew-aware-bpk-benchmark/exp_query_lat.sh
 # Tell the result-merging script about the 3 bits-per-key values
 sed -i 's/^bpk_list = .*/bpk_list = ["2.0","4.0","6.0"]/' \
